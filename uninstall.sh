@@ -24,6 +24,6 @@ if (typeof cmd === 'string' && cmd.includes('hud/hud.mjs')) {
 NODEEOF
 fi
 
-rm -f "$HUD_DIR/hud.mjs" "$HUD_DIR/.usage-cache.json" "$HUD_DIR/.sys-cache.json"
+rm -f "$HUD_DIR/hud.mjs" "$HUD_DIR/.usage-cache.json" "$HUD_DIR/.sys-cache.json" "$HUD_DIR/.session-cache.json"
 echo "ok: removed $HUD_DIR/hud.mjs and caches (config.json kept, delete it manually if unwanted)"
 echo "Done. Restart Claude Code to go back to the default statusline."

@@ -10,7 +10,7 @@ CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 HUD_DIR="$CLAUDE_DIR/hud"
 SETTINGS="$CLAUDE_DIR/settings.json"
 
-# ── 1. Node.js check (needs >=18.15 for global fetch + statfsSync) ──
+# ── 1. Node.js check (needs >=18.15 for statfsSync) ──
 if ! command -v node >/dev/null 2>&1; then
   echo "error: Node.js not found. The HUD needs Node.js v18.15+ — https://nodejs.org" >&2
   exit 1
