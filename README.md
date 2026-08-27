@@ -2,15 +2,15 @@
 
 # Claude Code HUD
 
-A 3-line, column-aligned statusline for [Claude Code](https://claude.com/claude-code). Model, context, session cache-hit rate, output speed, system load, and your 5-hour / 7-day quota — in one glanceable grid.
+A 3-line, column-aligned statusline for [Claude Code](https://claude.com/claude-code). Model, context, session cache-hit rate, output speed, system load, and your 5-hour / 7-day / per-model weekly quota — in one glanceable grid.
 
 ```
-Opus 5    ⋮ xhigh     ⋮ 💭 On      ⋮ 📁 ~/projects/myapp
-ctx  52%  ⋮ CH  99.2% ⋮ tok/s  164 ⋮ 5h ●●●○○ 58% ↻3h10m
-cpu  33%  ⋮ mem  34%  ⋮ disk  16%  ⋮ 7d ●○○○○ 17% ↻5d3h
+Opus 5          ⋮ ctx      52% ⋮ cpu   33% ⋮ 5h    ●●●○○  58% ↻3h10m
+xhigh 💭On      ⋮ tok/s    164 ⋮ mem   34% ⋮ 7d    ●○○○○  17% ↻5d3h
+📁 …/myapp      ⋮ Cache  99.2% ⋮ disk  16% ⋮ Opus  ●●●○○  69% ↻1d6h
 ```
 
-Columns 1–3 have **fixed** widths — never derived from content — so a value going from 9% to 100%, a model swap, or a longer effort level can't shove the rest of the row sideways. Column 4 is free: it holds the only genuinely variable-width content (working directory, quota rings) and sits at the right edge where drift costs nothing.
+Columns 1–3 have **fixed** widths — never derived from content — so a value going from 9% to 100%, a model swap, or a long path can't shove the rest of the row sideways (long paths elide to `…/last/two`). Within a metric cell the label sits flush left and the value flush right, so every value in a column shares one right edge. Column 4 is free: it holds the quota rows, which align among themselves on the widest label, and sits at the right edge where drift costs nothing.
 
 The divider is a dashed `⋮` rather than a solid `│` on purpose: stacked across three rows, a solid rule welds into one unbroken line and the HUD starts reading as a boxed table instead of three separate rows.
 
@@ -18,12 +18,12 @@ The divider is a dashed `⋮` rather than a solid `│` on purpose: stacked acro
 
 | Column | Row 1 | Row 2 | Row 3 |
 |--------|-------|-------|-------|
-| 1 | Model, cleaned up and color-coded by family | Context window usage | CPU utilization |
-| 2 | Reasoning effort, colored by intensity | **Session cache-hit rate** | Memory usage |
-| 3 | Always-thinking on/off | **Output speed** | Disk usage |
-| 4 | Working directory (worktrees render as `repo:wt/name`) | 5-hour quota | 7-day quota |
+| 1 | Model, cleaned up and color-coded by family | Reasoning effort (colored by intensity) + always-thinking on/off | Working directory (worktrees render as `repo:wt/name`) |
+| 2 | Context window usage | **Output speed** | **Session cache-hit rate** |
+| 3 | CPU utilization | Memory usage | Disk usage |
+| 4 | 5-hour quota | 7-day quota | **Per-model weekly quota** (label = model name; bold when it is the binding limit) |
 
-**CH** is the cache-hit rate across the *whole session*: `cache_read ÷ (cache_read + cache_creation + uncached input)`. Since a high number is the good end here, its color ramp is inverted — 99% reads green.
+**Cache** is the cache-hit rate across the *whole session*: `cache_read ÷ (cache_read + cache_creation + uncached input)`. Since a high number is the good end here, its color ramp is inverted — 99% reads green.
 
 **tok/s** is output speed over the last 5 completed requests, weighted by output size so one short reply can't swing it. Samples under a second are discarded: they describe when lines were flushed to the transcript, not how fast the model generated.
 
@@ -55,6 +55,7 @@ The installer copies `hud.mjs` to `~/.claude/hud/`, backs up your `settings.json
 - **Node.js ≥ 18.15** (`statfsSync`)
 - Claude Code **2.0.71+**, which puts `rate_limits` in the statusline payload. On older versions the quota column is simply absent.
 - A **subscription login** (Pro/Max) for the quota column. On API-key setups those cells don't render; everything else still works.
+- The per-model weekly row needs the OAuth token Claude Code already stores locally (macOS Keychain, `~/.claude/.credentials.json`, or `CLAUDE_CODE_OAUTH_TOKEN`). Without it that one row is simply absent.
 - CPU and memory read `/proc`, so they are Linux-only. Anything unavailable is silently skipped, never an error.
 
 ## Configuration
@@ -64,7 +65,7 @@ Optional. Create `~/.claude/hud/config.json`:
 ```json
 {
   "diskPath": "/data",
-  "cols": [9, 9, 10],
+  "cols": [15, 12, 9],
   "sep": "⋮"
 }
 ```
@@ -72,16 +73,17 @@ Optional. Create `~/.claude/hud/config.json`:
 | Key | Default | Effect |
 |-----|---------|--------|
 | `diskPath` | `"/"` | Mount point measured by the `disk` cell |
-| `cols` | `[9, 9, 10]` | Fixed widths of columns 1–3. Widen if your model names or labels overflow |
+| `cols` | `[15, 12, 9]` | Fixed widths of columns 1–3. Widen column 1 if you want longer paths; the others are sized for `Cache 100.0%` and `disk 100%` |
 | `sep` | `"⋮"` | Column divider. `"┊"`, `"╎"`, `"¦"` also read well; `""` drops the dividers and aligns on padding alone |
 
 ## How it works
 
-- Claude Code invokes the script (per `statusLine.refreshInterval`, every 2s) and pipes the session payload on stdin: model, context window, effort, thinking, cwd, and `rate_limits`. **No network calls, no credentials, no token refresh** — the quota numbers come straight from Claude Code.
-- **CH** and **tok/s** are session-wide facts that stdin cannot supply — its `current_usage` describes only the latest request — so they are aggregated from the session transcript JSONL. The scan is incremental: a cache in `~/.claude/hud/.session-cache.json` holds a byte offset plus running totals, and each render parses only the bytes appended since the last one. Requests are de-duplicated by `requestId`, since one response can span several transcript records that repeat the same cumulative usage.
+- Claude Code invokes the script (per `statusLine.refreshInterval`, every 2s) and pipes the session payload on stdin: model, context window, effort, thinking, cwd, and `rate_limits`. The 5h / 7d numbers come straight from that payload — no network involved.
+- The **per-model weekly cap** is the one number Claude Code does not hand to the statusline. It is read from the same OAuth usage endpoint the CLI uses, with the token Claude Code already stores, and cached in `~/.claude/hud/.usage-cache.json` for 60s (30s after an error) so the 2s refresh never hits the API at that rate. The last good reading is kept across transient failures. Set `HUD_DEBUG=1` to log why a fetch failed.
+- **Cache** and **tok/s** are session-wide facts that stdin cannot supply — its `current_usage` describes only the latest request — so they are aggregated from the session transcript JSONL. The scan is incremental: a cache in `~/.claude/hud/.session-cache.json` holds a byte offset plus running totals, and each render parses only the bytes appended since the last one. Requests are de-duplicated by `requestId`, since one response can span several transcript records that repeat the same cumulative usage.
 - Column alignment is measured, not guessed: ANSI codes are stripped and the remainder is walked as grapheme clusters, counting emoji, flags and CJK as two cells.
 - CPU% is a delta between `/proc/stat` samples cached in `~/.claude/hud/.sys-cache.json`, so the first render shows `cpu —` and it settles from the second refresh on.
-- **Privacy:** nothing leaves your machine. The HUD reads local files and its own stdin.
+- **Privacy:** the only outbound request is the usage call to Anthropic's API, using the token Claude Code already holds. Nothing else leaves your machine; the HUD reads local files and its own stdin.
 
 ## Uninstall
 

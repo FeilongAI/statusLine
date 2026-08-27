@@ -2,9 +2,9 @@
 /**
  * Claude Code HUD — a 3-line, column-aligned statusline for Claude Code.
  *
- *   Opus 5    ⋮ xhigh     ⋮ 💭 On     ⋮ 📁 ~/data/claude
- *   ctx  52%  ⋮ CH  99.2% ⋮ tok/s  164 ⋮ 5h ●●●○○ 58% ↻3h10m
- *   cpu  32%  ⋮ mem  37%  ⋮ disk  11%  ⋮ 7d ●○○○○ 17% ↻5d3h
+ *   Opus 5          ⋮ ctx   52%     ⋮ cpu  32%  ⋮ 5h ●●●○○ 58% ↻3h10m
+ *   xhigh 💭On      ⋮ tok/s  164    ⋮ mem  37%  ⋮ 7d ●○○○○ 17% ↻5d3h
+ *   📁 ~/data/claude ⋮ Cache  99.2%  ⋮ disk  11% ⋮ Opus ●●●○○ 69% ↻1d6h
  *
  * Layout: a fixed 4-column grid. Columns 1–3 have FIXED widths (never derived
  * from content) and are separated by a dashed rule, so a value changing from 9% to 100%
@@ -18,9 +18,11 @@
  * Data sources:
  *  - Everything on rows 1 and the quota column comes from the statusline stdin
  *    payload (model, effort, thinking, cwd, context_window, rate_limits).
- *    No network calls, no credentials, no token refresh — Claude Code hands us
- *    rate_limits directly.
- *  - CH (session cache-hit rate) and tok/s are aggregated from the session
+ *    Claude Code hands us rate_limits directly, so the 5h/7d cells cost nothing.
+ *  - The per-model weekly cap ("Fable 69%") is the one number Claude Code does
+ *    not hand to the statusline, so it is fetched from the OAuth usage endpoint
+ *    and cached for 60s. Everything else is local.
+ *  - Cache (session cache-hit rate) and tok/s are aggregated from the session
  *    transcript JSONL, scanned incrementally: each render reads only the bytes
  *    appended since the last one and folds them into a cached running total.
  *  - cpu/mem read /proc (Linux only); disk uses statfs everywhere.
@@ -30,6 +32,7 @@
  */
 
 import { readFileSync, writeFileSync, statfsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -38,6 +41,11 @@ const VERSION = '2.0.0';
 const HOME = homedir();
 const HUD_DIR = join(HOME, '.claude', 'hud');
 const SYS_CACHE_PATH = join(HUD_DIR, '.sys-cache.json');
+const USAGE_CACHE_PATH = join(HUD_DIR, '.usage-cache.json');
+const USAGE_TTL = 60_000;        // the statusline reruns every 2s; the API must not
+const USAGE_TTL_ERR = 30_000;    // see that rate, so responses are cached
+// Claude Code's public OAuth client id (same one the CLI itself uses).
+const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const SESSION_CACHE_PATH = join(HUD_DIR, '.session-cache.json');
 
 // ── User config (all optional) ──────────────────────
@@ -53,7 +61,7 @@ const DISK_PATH = typeof CFG.diskPath === 'string' ? CFG.diskPath : '/';
 // "ultracode", "tok/s 1234". Cell content is left-aligned against the divider;
 // only the number inside a metric is right-padded, so digits still stack.
 const COLS = Array.isArray(CFG.cols) && CFG.cols.length === 3
-  ? CFG.cols.map(Number) : [9, 9, 10];
+  ? CFG.cols.map(Number) : [15, 12, 9];
 
 const EMO = { think: '💭', cwd: '📁' };
 
@@ -135,12 +143,11 @@ function fit(str, width, align = 'left') {
   return align === 'right' ? pad + str : str + pad;
 }
 
-// A metric cell: label, one space, then the value. The value carries its own
-// fixed width (padStart) so 9% and 100% still line up, while the pair as a whole
-// stays flush left instead of being stretched across the column.
+// A metric cell: label flush left, value flush right, so every value in a
+// column shares one right edge regardless of label length.
 function metric(label, value, width) {
-  const body = `${C.white}${label}${C.reset} ${value}`;
-  return fit(body, width);
+  const gap = Math.max(1, width - dispWidth(label) - dispWidth(value));
+  return `${C.white}${label}${C.reset}${' '.repeat(gap)}${value}`;
 }
 
 // ── Helpers ─────────────────────────────────────────
@@ -151,11 +158,18 @@ function healthColor(pct) {
   return C.green;
 }
 
-function fmtResetRelative(isoStr) {
-  if (!isoStr) return '';
-  const reset = new Date(isoStr);
-  if (isNaN(reset.getTime())) return '';
-  const diffMs = reset.getTime() - Date.now();
+// The OAuth endpoint hands back an ISO string; the statusline payload hands back
+// the raw `anthropic-ratelimit-unified-reset` header, which is epoch SECONDS.
+// Feeding those seconds to `new Date()` lands in 1970 and every countdown reads
+// "now", so normalise both shapes here.
+function fmtResetRelative(at) {
+  if (at == null || at === '') return '';
+  let ms;
+  if (typeof at === 'number') ms = at < 1e12 ? at * 1000 : at;
+  else if (/^\d+$/.test(String(at))) ms = Number(at) < 1e12 ? Number(at) * 1000 : Number(at);
+  else ms = new Date(at).getTime();
+  if (!Number.isFinite(ms)) return '';
+  const diffMs = ms - Date.now();
   if (diffMs <= 0) return 'now';
   const totalMin = Math.floor(diffMs / 60_000);
   const hours = Math.floor(totalMin / 60);
@@ -174,15 +188,35 @@ function quotaCircles(pct) {
   return `${clr}${'●'.repeat(full)}${C.dimGray}${'○'.repeat(5 - full)}${C.reset}`;
 }
 
-// "5h ●●●○○ 58% ↻3h10m" — lives in the free column, so only the ring block
-// needs to be width-stable (it always renders 5 circles).
-function quotaCell(label, bucket) {
-  if (!bucket || typeof bucket.used_percentage !== 'number') return '';
-  const pct = Math.round(bucket.used_percentage);
-  const clr = healthColor(pct);
-  const reset = fmtResetRelative(bucket.resets_at);
-  const resetStr = reset ? ` ${C.gray}↻${reset}${C.reset}` : '';
-  return `${C.white}${label} ${C.reset}${quotaCircles(pct)} ${clr}${String(pct).padStart(2)}%${C.reset}${resetStr}`;
+// The three quota rows stack in the free column, so they align among themselves:
+// every label is padded to the widest one ("Fable" is longer than "5h"), which
+// puts the ring blocks, the percentages and the countdowns each in their own
+// sub-column. `labelW` is that shared width.
+function quotaRow(label, pct, resetsAt, labelW, bold = false) {
+  const name = `${bold ? C.bold : ''}${C.white}${label}${C.reset}`;
+  const pad = ' '.repeat(Math.max(0, labelW - dispWidth(label)));
+  if (pct == null) {
+    return `${name}${pad} ${C.dimGray}○○○○○${C.reset} ${C.dim}  —${C.reset}`;
+  }
+  const p = Math.round(pct);
+  const reset = fmtResetRelative(resetsAt);
+  return `${name}${pad} ${quotaCircles(p)} ${healthColor(p)}${String(p).padStart(3)}%${C.reset}`
+    + (reset ? ` ${C.gray}↻${reset}${C.reset}` : '');
+}
+
+// A bucket can be absent before the session's first response, or right after a
+// window rolls over. Render a placeholder rather than letting the cell vanish —
+// a segment that silently disappears reads as a bug.
+function quotaCell(label, bucket, labelW) {
+  const pct = bucket && typeof bucket.used_percentage === 'number' ? bucket.used_percentage : null;
+  return quotaRow(label, pct, bucket?.resets_at, labelW);
+}
+
+// The per-model weekly cap. Its label is the model name, and when this is the
+// binding limit the label goes bold — that is the number that stops you first.
+function scopedCell(s, labelW) {
+  if (!s || typeof s.pct !== 'number') return '';
+  return quotaRow(s.name, s.pct, s.resets_at, labelW, s.active);
 }
 
 // ── System stats ────────────────────────────────────
@@ -340,8 +374,92 @@ function sessionStats(stdin) {
   return { ch, tps, requests: st.seenN, out: st.out };
 }
 
+// ── Model-scoped weekly limit ───────────────────────
+// stdin carries only the five_hour and seven_day buckets. The per-model weekly
+// cap — the one that actually binds when you live on Opus or Fable — exists
+// only in the OAuth usage endpoint's `limits[]`, as kind "weekly_scoped" with
+// the model in `scope`. That is the sole reason this file talks to the network.
+function getCredentials() {
+  const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (envToken) return { accessToken: envToken };
+  if (process.platform === 'darwin') {
+    try {
+      const raw = execSync('/usr/bin/security find-generic-password -s "Claude Code-credentials" -w',
+        { encoding: 'utf8', timeout: 2000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      const parsed = JSON.parse(raw);
+      return parsed.claudeAiOauth || parsed;
+    } catch { /* fall through to the file */ }
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(join(HOME, '.claude', '.credentials.json'), 'utf8'));
+    return parsed.claudeAiOauth || parsed;
+  } catch { return null; }
+}
+
+async function refreshAccessToken(refreshToken) {
+  try {
+    const res = await fetch('https://platform.claude.com/v1/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}&client_id=${OAUTH_CLIENT_ID}`,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()).access_token || null;
+  } catch { return null; }
+}
+
+function pickScoped(data) {
+  const lim = (data?.limits || []).find(
+    l => l.kind === 'weekly_scoped' && l.scope?.model?.display_name && typeof l.percent === 'number');
+  if (!lim) return null;
+  return { name: lim.scope.model.display_name, pct: lim.percent,
+           resets_at: lim.resets_at, active: lim.is_active === true };
+}
+
+async function fetchScopedLimit() {
+  let cached = null;
+  try {
+    const c = JSON.parse(readFileSync(USAGE_CACHE_PATH, 'utf8'));
+    const ttl = c.error ? USAGE_TTL_ERR : USAGE_TTL;
+    cached = c.data ?? null;
+    if (Date.now() - (c.timestamp || 0) < ttl) return cached;
+  } catch { /* no cache yet */ }
+
+  const write = (data, error) => {
+    // Keep the last good reading on a transient failure so the cell does not
+    // blink out mid-session.
+    try { writeFileSync(USAGE_CACHE_PATH, JSON.stringify({ timestamp: Date.now(), data: error ? cached : data, error })); }
+    catch { /* ignore */ }
+  };
+
+  try {
+    const creds = getCredentials();
+    if (!creds?.accessToken) { write(null, true); return cached; }
+    let token = creds.accessToken;
+    if (creds.expiresAt && Date.now() > creds.expiresAt && creds.refreshToken) {
+      token = (await refreshAccessToken(creds.refreshToken)) || token;
+    }
+    const call = (tk) => fetch('https://api.anthropic.com/api/oauth/usage', {
+      headers: { Authorization: `Bearer ${tk}`, 'anthropic-beta': 'oauth-2025-04-20' },
+      signal: AbortSignal.timeout(4000),
+    });
+    let res = await call(token);
+    if (res.status === 401 && creds.refreshToken) {
+      const fresh = await refreshAccessToken(creds.refreshToken);
+      if (fresh) res = await call(fresh);
+    }
+    if (!res.ok) { if (process.env.HUD_DEBUG) console.error("scoped HTTP", res.status); write(null, true); return cached; }
+    const scoped = pickScoped(await res.json());
+    write(scoped, false);
+    return scoped;
+  } catch (e) { if (process.env.HUD_DEBUG) console.error("scoped fetch failed:", e?.name, e?.message); write(null, true); return cached; }
+}
+
 // ── cwd ─────────────────────────────────────────────
-const CWD_MAX = 28;
+// The folder cell is a fixed-width column now, so long paths elide instead of
+// stretching the grid. 3 cells go to the "📁 " prefix.
+const CWD_MAX = Math.max(8, COLS[0] - 3);
 
 function fmtCwd(cwd) {
   if (!cwd) return '';
@@ -376,7 +494,7 @@ function pctVal(pct) {
     : `${healthColor(pct)}${String(pct).padStart(3)}%${C.reset}`;
 }
 
-function buildGrid(stdin) {
+function buildGrid(stdin, scoped) {
   const sess = sessionStats(stdin) || {};
 
   // Model name → "Opus 5": strip "Claude ", a "(1M context)" tail, a "[1m]" tail.
@@ -392,10 +510,13 @@ function buildGrid(stdin) {
   const effLvl = String(stdin?.effort?.level ?? '').toLowerCase();
   const effColor = { low: C.green, medium: C.cyan, high: C.blue, xhigh: C.magenta,
                      ultracode: C.red, max: C.red }[effLvl] || C.white;
-  const effCell = effLvl ? `${effColor}${effLvl}${C.reset}` : `${C.dim}—${C.reset}`;
-
   const thinkOn = stdin.thinking?.enabled !== false;
-  const thinkCell = `${EMO.think} ${thinkOn ? C.green + 'On' : C.gray + 'Off'}${C.reset}`;
+  const thinkTag = `${EMO.think}${thinkOn ? C.green + 'On' : C.gray + 'Off'}${C.reset}`;
+  // Effort and thinking are one thought — "how hard is it working" — so they
+  // share a cell instead of each burning a column.
+  const effCell = effLvl
+    ? `${effColor}${effLvl}${C.reset} ${thinkTag}`
+    : thinkTag;
 
   const cwd = stdin.workspace?.current_dir ?? stdin.cwd ?? '';
   const cwdCell = cwd ? `${EMO.cwd} ${C.white}${fmtCwd(cwd)}${C.reset}` : '';
@@ -410,25 +531,27 @@ function buildGrid(stdin) {
 
   const chPct = sess.ch == null ? null : Math.round(sess.ch * 10) / 10;
   const chCell = chPct == null
-    ? metric('CH', `${C.dim}    —${C.reset}`, COLS[1])
+    ? metric('Cache', `${C.dim}    —${C.reset}`, COLS[1])
     // A high cache-hit rate is the healthy end here, so the health palette is
     // inverted: 99% must read green, not red.
-    : metric('CH', `${healthColor(100 - chPct)}${chPct.toFixed(1).padStart(5)}%${C.reset}`, COLS[1]);
+    : metric('Cache', `${healthColor(100 - chPct)}${chPct.toFixed(1).padStart(5)}%${C.reset}`, COLS[1]);
 
   const tpsCell = sess.tps == null
-    ? metric('tok/s', `${C.dim}   —${C.reset}`, COLS[2])
-    : metric('tok/s', `${C.cyan}${String(Math.round(sess.tps)).padStart(4)}${C.reset}`, COLS[2]);
+    ? metric('tok/s', `${C.dim}   —${C.reset}`, COLS[1])
+    : metric('tok/s', `${C.cyan}${String(Math.round(sess.tps)).padStart(4)}${C.reset}`, COLS[1]);
 
   const rl = stdin.rate_limits || {};
+  // Widest quota label wins; "5h" and "7d" pad up to it.
+  const qw = Math.max(2, scoped?.name ? dispWidth(scoped.name) : 0);
 
   const joiner = BAR ? ` ${BAR} ` : '   ';
   const rows = [
-    [fit(modelCell, COLS[0]), fit(effCell, COLS[1]), fit(thinkCell, COLS[2]), cwdCell],
-    [metric('ctx', pctVal(ctxPct), COLS[0]), chCell, tpsCell, quotaCell('5h', rl.five_hour)],
-    [metric('cpu', pctVal(getCpuPct()), COLS[0]),
-     metric('mem', pctVal(getMemPct()), COLS[1]),
-     metric('disk', pctVal(getDiskPct(DISK_PATH)), COLS[2]),
-     quotaCell('7d', rl.seven_day)],
+    [fit(modelCell, COLS[0]), metric('ctx', pctVal(ctxPct), COLS[1]),
+     metric('cpu', pctVal(getCpuPct()), COLS[2]), quotaCell('5h', rl.five_hour, qw)],
+    [fit(effCell, COLS[0]), tpsCell,
+     metric('mem', pctVal(getMemPct()), COLS[2]), quotaCell('7d', rl.seven_day, qw)],
+    [fit(cwdCell, COLS[0]), chCell,
+     metric('disk', pctVal(getDiskPct(DISK_PATH)), COLS[2]), scopedCell(scoped, qw)],
   ];
 
   return rows.map(cells => cells.filter(c => c !== '').join(joiner));
@@ -437,7 +560,8 @@ function buildGrid(stdin) {
 async function main() {
   const stdin = await readStdin();
   if (!stdin) process.exit(0);
-  const lines = buildGrid(stdin);
+  const scoped = await fetchScopedLimit();
+  const lines = buildGrid(stdin, scoped);
   if (!lines.length) process.exit(0);
   // Spaces → NBSP so the terminal cannot collapse the grid's padding.
   console.log(lines.join('\n').replace(/ /g, ' '));
