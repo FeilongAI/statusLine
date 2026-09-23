@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-code-hud",
+  "description": "Claude Code HUD — a 3-line, column-aligned statusline.",
+  "owner": {
+    "name": "yang1997434",
+    "url": "https://github.com/yang1997434"
+  },
+  "plugins": [
+    {
+      "name": "claude-code-hud",
+      "description": "3-line, column-aligned statusline: model, context, cache-hit rate, tok/s, system load, and 5h / 7d / per-model quota.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

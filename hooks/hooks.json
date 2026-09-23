@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hud/hud.mjs\"; if [ -f \"$f\" ] && ! cmp -s \"${CLAUDE_PLUGIN_ROOT}/hud.mjs\" \"$f\"; then cp \"${CLAUDE_PLUGIN_ROOT}/hud.mjs\" \"$f\"; fi; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

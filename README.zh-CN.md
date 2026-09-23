@@ -5,12 +5,12 @@
 给 [Claude Code](https://claude.com/claude-code) 用的三行状态栏，按列对齐。模型、上下文、会话缓存命中率、输出速度、系统负载、5 小时 / 7 天 / 按模型的周配额，一眼看完。
 
 ```
-Opus 5          ⋮ ctx      52% ⋮ cpu   33% ⋮ 5h    ●●●○○  58% ↻3h10m
-xhigh 💭On      ⋮ tok/s    164 ⋮ mem   34% ⋮ 7d    ●○○○○  17% ↻5d3h
-📁 …/myapp      ⋮ Cache  99.2% ⋮ disk  16% ⋮ Opus  ●●●○○  69% ↻1d6h
+Opus 5.5        ⋮ ctx      52% ⋮ cpu    8% ⋮ 5h    ●●●○○  58% ↻3h10m
+xhigh 💭On      ⋮ tok/s    105 ⋮ mem   34% ⋮ 7d    ●○○○○  17% ↻5d3h
+📁 ~/code/myapp ⋮ Cache  99.0% ⋮ disk  21% ⋮ Fable ●○○○○  16% ↻2d11h
 ```
 
-前三列宽度**写死**，不随内容变。所以数值从 9% 跳到 100%、换个模型、路径再长，后面的列一格都不会动（长路径省略成 `…/倒数/两级`）。指标格里标签靠左、数值靠右贴边，同一列的数字共用一条右边缘。第四列不设宽度，装的是三行配额，它们之间按最宽的标签对齐，放在最右边，右边参差不影响左边任何一格。
+前三列宽度**写死**，不随内容变。所以数值从 9% 跳到 100%、换个模型、路径再长，后面的列一格都不会动（长路径只保留末尾，如 `~/projects/myapp` 显示成 `…jects/myapp`）。指标格里标签靠左、数值靠右贴边，同一列的数字共用一条右边缘。第四列不设宽度，装的是三行配额，它们之间按最宽的标签对齐，放在最右边，右边参差不影响左边任何一格。
 
 分隔符用虚线 `⋮` 而不是实线 `│` 是刻意的：实线竖着叠三行会焊成一条不断的线，整个 HUD 就读成一个被框住的表格，而不是三行独立的信息。
 
@@ -31,7 +31,17 @@ xhigh 💭On      ⋮ tok/s    164 ⋮ mem   34% ⋮ 7d    ●○○○○  17% 
 
 ## 安装
 
-**一行命令：**
+**作为 Claude Code 插件安装**（以后用 `/plugin update` 升级）—— 在 Claude Code 里依次执行：
+
+```
+/plugin marketplace add yang1997434/claude-code-hud
+/plugin install claude-code-hud@claude-code-hud
+/claude-code-hud:setup
+```
+
+插件没法自己接管主状态栏，所以要跑一次 `setup`：你已经有别的状态栏时它会先问你，然后执行下面同一个 `install.sh`。之后插件在每次会话启动时把 `~/.claude/hud/hud.mjs` 同步成插件里的最新版，升级就是 `/plugin update` 再开一个新会话。想调显示请改 `config.json`；直接改脚本会被覆盖，想自己改脚本请用下面的脚本安装。
+
+**或者一行命令：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yang1997434/claude-code-hud/main/install.sh | bash
@@ -48,7 +58,7 @@ cd claude-code-hud && ./install.sh
 
 > 安装 https://github.com/yang1997434/claude-code-hud 这个状态栏：拉取它的 install.sh 并执行，然后确认 ~/.claude/settings.json 里的 statusLine 配置。
 
-安装脚本把 `hud.mjs` 复制到 `~/.claude/hud/`，备份你的 `settings.json`，再把 `statusLine` 指向该脚本。重启 Claude Code 即可看到。
+不管哪种方式，安装脚本都会把 `hud.mjs` 复制到 `~/.claude/hud/`，备份你的 `settings.json`，再把 `statusLine` 指向该脚本。重启 Claude Code 即可看到。
 
 ### 环境要求
 
@@ -56,6 +66,7 @@ cd claude-code-hud && ./install.sh
 - Claude Code **2.0.71+**，这个版本起 statusline 的输入里带 `rate_limits`。更早的版本配额那一列不显示。
 - 配额列需要**订阅账号**（Pro/Max）。用 API key 的话那几格不渲染，其余照常。
 - 按模型的周配额那一行需要 Claude Code 本地已存的 OAuth token（macOS Keychain、`~/.claude/.credentials.json` 或 `CLAUDE_CODE_OAUTH_TOKEN`）。没有的话只是少这一行。
+- Linux 或 macOS（安装脚本和插件钩子是 bash）；Windows 未测试。
 - CPU 和内存读 `/proc`，仅限 Linux。取不到的数据静默跳过，不会报错。
 
 ## 配置
@@ -79,19 +90,28 @@ cd claude-code-hud && ./install.sh
 ## 工作原理
 
 - Claude Code 按 `statusLine.refreshInterval`（默认 2 秒）调用脚本，把会话数据从 stdin 传进来：模型、上下文窗口、effort、思考开关、工作目录，以及 `rate_limits`。5h / 7d 两个数字直接来自这份数据，不经过网络。
-- **按模型的周配额**是唯一一个 Claude Code 不传给 statusline 的数字。它从 CLI 自己用的那个 OAuth usage 接口读，用的是 Claude Code 已存的 token，结果缓存在 `~/.claude/hud/.usage-cache.json` 里 60 秒（出错后 30 秒），2 秒一次的刷新不会以这个频率打 API。临时失败时保留上一次的读数。设 `HUD_DEBUG=1` 可以看到请求失败的原因。
+- **按模型的周配额**是唯一一个 Claude Code 不传给 statusline 的数字。它从 CLI 自己用的那个 OAuth usage 接口读，用的是 Claude Code 已存的 token（这个 access token 过期时，会用已存的 refresh token 为这一次调用换一个新的，新 token 只在内存里用、不写回），结果缓存在 `~/.claude/hud/.usage-cache.json` 里 60 秒（出错后 30 秒），2 秒一次的刷新不会以这个频率打 API。临时失败时保留上一次的读数。设 `HUD_DEBUG=1` 可以看到请求失败的原因。
 - **Cache** 和 **tok/s** 是会话级的事实，stdin 给不了（它的 `current_usage` 只描述最近一次请求），所以从会话的 transcript JSONL 里聚合。扫描是增量的：`~/.claude/hud/.session-cache.json` 里存着字节 offset 和累计值，每次渲染只解析新追加的那部分。请求按 `requestId` 去重 —— 一次响应会写成多条 transcript 记录，而这些记录里的 usage 是重复的累计值。
 - 列对齐是量出来的，不是猜的：先剥掉 ANSI 色码，再按字素簇遍历，emoji、国旗、CJK 按两格计算。
 - CPU 占用需要两次 `/proc/stat` 采样求差值，样本缓存在 `~/.claude/hud/.sys-cache.json`，所以首次渲染显示 `cpu —`，第二次刷新起才有数字。
-- **隐私**：唯一的出站请求是用 Claude Code 已有的 token 调 Anthropic 的 usage 接口。除此之外没有任何数据离开你的机器，HUD 只读本地文件和自己的 stdin。
+- **隐私**：出站请求只发往 Anthropic —— usage 接口，以及已存 token 过期时的一次换 token 请求 —— 用的都是 Claude Code 已有的凭据。除此之外没有任何数据离开你的机器，HUD 只读本地文件和自己的 stdin。
 
 ## 卸载
+
+插件安装的 —— 在 Claude Code 里：
+
+```
+/claude-code-hud:uninstall
+/plugin uninstall claude-code-hud@claude-code-hud
+```
+
+脚本安装的：
 
 ```bash
 ./uninstall.sh
 ```
 
-移除 `statusLine` 配置（仅当它指向本 HUD）、脚本本身和缓存文件。
+两种方式都会移除 `statusLine` 配置（仅当它指向本 HUD）、脚本本身和缓存文件；`config.json` 保留。
 
 ## License
 
