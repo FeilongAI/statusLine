@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Claude Code HUD — one-line installer.
-#   curl -fsSL https://raw.githubusercontent.com/yang1997434/claude-code-hud/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/FeilongAI/statusLine/main/install.sh | bash
 # or, from a clone:
 #   ./install.sh
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/yang1997434/claude-code-hud/main"
+REPO_RAW="https://raw.githubusercontent.com/FeilongAI/statusLine/main"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 HUD_DIR="$CLAUDE_DIR/hud"
 SETTINGS="$CLAUDE_DIR/settings.json"

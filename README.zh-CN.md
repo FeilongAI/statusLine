@@ -2,6 +2,8 @@
 
 # Claude Code HUD
 
+> 基于 [yang1997434/claude-code-hud](https://github.com/yang1997434/claude-code-hud)（MIT）修改：补充 macOS 的 CPU/内存读取，目录只显示当前一级。
+
 给 [Claude Code](https://claude.com/claude-code) 用的三行状态栏，按列对齐。模型、上下文、会话缓存命中率、输出速度、系统负载、5 小时 / 7 天 / 按模型的周配额，一眼看完。
 
 ```
@@ -34,7 +36,7 @@ xhigh 💭On      ⋮ tok/s    105 ⋮ mem   34% ⋮ 7d    ●○○○○  17% 
 **作为 Claude Code 插件安装**（以后用 `/plugin update` 升级）—— 在 Claude Code 里依次执行：
 
 ```
-/plugin marketplace add yang1997434/claude-code-hud
+/plugin marketplace add FeilongAI/statusLine
 /plugin install claude-code-hud@claude-code-hud
 /claude-code-hud:setup
 ```
@@ -44,19 +46,19 @@ xhigh 💭On      ⋮ tok/s    105 ⋮ mem   34% ⋮ 7d    ●○○○○  17% 
 **或者一行命令：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yang1997434/claude-code-hud/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FeilongAI/statusLine/main/install.sh | bash
 ```
 
 **或者从 clone 装：**
 
 ```bash
-git clone https://github.com/yang1997434/claude-code-hud.git
-cd claude-code-hud && ./install.sh
+git clone https://github.com/FeilongAI/statusLine.git
+cd statusLine && ./install.sh
 ```
 
 **或者直接让 Claude 装** —— 把这段贴进 Claude Code：
 
-> 安装 https://github.com/yang1997434/claude-code-hud 这个状态栏：拉取它的 install.sh 并执行，然后确认 ~/.claude/settings.json 里的 statusLine 配置。
+> 安装 https://github.com/FeilongAI/statusLine 这个状态栏：拉取它的 install.sh 并执行，然后确认 ~/.claude/settings.json 里的 statusLine 配置。
 
 不管哪种方式，安装脚本都会把 `hud.mjs` 复制到 `~/.claude/hud/`，备份你的 `settings.json`，再把 `statusLine` 指向该脚本。重启 Claude Code 即可看到。
 

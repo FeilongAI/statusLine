@@ -2,6 +2,8 @@
 
 # Claude Code HUD
 
+> Forked from [yang1997434/claude-code-hud](https://github.com/yang1997434/claude-code-hud) (MIT). This fork adds macOS CPU/memory readings and shows only the current folder name.
+
 A 3-line, column-aligned statusline for [Claude Code](https://claude.com/claude-code). Model, context, session cache-hit rate, output speed, system load, and your 5-hour / 7-day / per-model weekly quota — in one glanceable grid.
 
 ```
@@ -34,7 +36,7 @@ Percentages share one health palette: **<50 green · 50–75 yellow · 75–90 o
 **As a Claude Code plugin** (upgrades with `/plugin update`) — run inside Claude Code:
 
 ```
-/plugin marketplace add yang1997434/claude-code-hud
+/plugin marketplace add FeilongAI/statusLine
 /plugin install claude-code-hud@claude-code-hud
 /claude-code-hud:setup
 ```
@@ -44,19 +46,19 @@ A plugin cannot set the main statusline by itself, so `setup` does it once: it a
 **Or the one-liner:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yang1997434/claude-code-hud/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FeilongAI/statusLine/main/install.sh | bash
 ```
 
 **Or from a clone:**
 
 ```bash
-git clone https://github.com/yang1997434/claude-code-hud.git
-cd claude-code-hud && ./install.sh
+git clone https://github.com/FeilongAI/statusLine.git
+cd statusLine && ./install.sh
 ```
 
 **Or just ask your Claude** — paste this into Claude Code:
 
-> Install the statusline from https://github.com/yang1997434/claude-code-hud : fetch its install.sh and run it, then confirm the statusLine entry in ~/.claude/settings.json.
+> Install the statusline from https://github.com/FeilongAI/statusLine : fetch its install.sh and run it, then confirm the statusLine entry in ~/.claude/settings.json.
 
 Either way, the installer copies `hud.mjs` to `~/.claude/hud/`, backs up your `settings.json`, and points `statusLine` at the script. Restart Claude Code and the HUD appears.
 
