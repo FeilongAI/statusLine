@@ -25,7 +25,7 @@
  *  - Cache (session cache-hit rate) and tok/s are aggregated from the session
  *    transcript JSONL, scanned incrementally: each render reads only the bytes
  *    appended since the last one and folds them into a cached running total.
- *  - cpu/mem read /proc (Linux only); disk uses statfs everywhere.
+ *  - cpu/mem read /proc on Linux, os.cpus() / vm_stat on macOS; disk uses statfs everywhere.
  *
  * Optional config: ~/.claude/hud/config.json
  *   { "diskPath": "/data", "cols": [9, 9, 10], "sep": "⋮" }
@@ -33,7 +33,7 @@
 
 import { readFileSync, writeFileSync, statfsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { homedir } from 'node:os';
+import { homedir, cpus, totalmem } from 'node:os';
 import { join } from 'node:path';
 
 const VERSION = '2.0.0';
@@ -61,7 +61,7 @@ const DISK_PATH = typeof CFG.diskPath === 'string' ? CFG.diskPath : '/';
 // "ultracode", "tok/s 1234". Cell content is left-aligned against the divider;
 // only the number inside a metric is right-padded, so digits still stack.
 const COLS = Array.isArray(CFG.cols) && CFG.cols.length === 3
-  ? CFG.cols.map(Number) : [15, 12, 9];
+  ? CFG.cols.map(Number) : [22, 12, 9];
 
 const EMO = { think: '💭', cwd: '📁' };
 
@@ -226,6 +226,11 @@ function readProcStat() {
     const parts = line.trim().split(/\s+/).slice(1).map(Number);
     const [user = 0, nice = 0, system = 0, idle = 0, iowait = 0, irq = 0, softirq = 0, steal = 0] = parts;
     return { total: user + nice + system + idle + iowait + irq + softirq + steal, idle: idle + iowait, ts: Date.now() };
+  } catch { /* 非 Linux，走 os.cpus() */ }
+  try {
+    let total = 0, idle = 0;
+    for (const { times: t } of cpus()) { total += t.user + t.nice + t.sys + t.idle + t.irq; idle += t.idle; }
+    return total > 0 ? { total, idle, ts: Date.now() } : null;
   } catch { return null; }
 }
 
@@ -254,6 +259,16 @@ function getMemPct() {
     const total = pick('MemTotal'), available = pick('MemAvailable');
     if (!total || available == null) return null;
     return Math.round(((total - available) / total) * 100);
+  } catch { /* 非 Linux，走 vm_stat */ }
+  if (process.platform !== 'darwin') return null;
+  try {
+    const raw = execSync('/usr/bin/vm_stat', { encoding: 'utf8', timeout: 1000 });
+    const pageSize = Number(raw.match(/page size of (\d+) bytes/)?.[1]) || 4096;
+    const pick = (key) => Number(raw.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'))?.[1] ?? 0);
+    const used = (pick('Anonymous pages') - pick('Pages purgeable') + pick('Pages wired down')
+      + pick('Pages occupied by compressor')) * pageSize;
+    const total = totalmem();
+    return total > 0 ? Math.max(0, Math.min(100, Math.round((used / total) * 100))) : null;
   } catch { return null; }
 }
 
@@ -466,6 +481,7 @@ function fmtCwd(cwd) {
   let p = cwd.startsWith(HOME) ? '~' + cwd.slice(HOME.length) : cwd;
   const wt = p.match(/^(.*?)\/\.claude\/worktrees\/([^/]+)$/);
   if (wt) p = `${wt[1].split('/').pop() || wt[1]}:wt/${wt[2]}`;
+  else if (p !== '~' && p !== '/') p = p.split('/').filter(Boolean).pop() || p;
   if (p.length <= CWD_MAX) return p;
   const segs = p.split('/').filter(Boolean);
   if (segs.length >= 4) {

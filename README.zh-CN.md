@@ -18,7 +18,7 @@ xhigh 💭On      ⋮ tok/s    105 ⋮ mem   34% ⋮ 7d    ●○○○○  17% 
 
 | 列 | 第一行 | 第二行 | 第三行 |
 |----|--------|--------|--------|
-| 1 | 当前模型，名字清洗过、按系列配色 | 推理强度（按强度配色）+ 常驻思考开关 | 工作目录（worktree 显示成 `repo:wt/name`） |
+| 1 | 当前模型，名字清洗过、按系列配色 | 推理强度（按强度配色）+ 常驻思考开关 | 当前目录名，不带父级路径（worktree 显示成 `repo:wt/name`） |
 | 2 | 上下文窗口占用 | **输出速度** | **会话缓存命中率** |
 | 3 | CPU 占用 | 内存占用 | 磁盘占用 |
 | 4 | 5 小时配额 | 7 天配额 | **按模型的周配额**（标签是模型名；它是当前卡住你的那条限额时加粗） |
@@ -67,7 +67,7 @@ cd claude-code-hud && ./install.sh
 - 配额列需要**订阅账号**（Pro/Max）。用 API key 的话那几格不渲染，其余照常。
 - 按模型的周配额那一行需要 Claude Code 本地已存的 OAuth token（macOS Keychain、`~/.claude/.credentials.json` 或 `CLAUDE_CODE_OAUTH_TOKEN`）。没有的话只是少这一行。
 - Linux 或 macOS（安装脚本和插件钩子是 bash）；Windows 未测试。
-- CPU 和内存读 `/proc`，仅限 Linux。取不到的数据静默跳过，不会报错。
+- CPU 和内存在 Linux 上读 `/proc`；macOS 上 CPU 用 `os.cpus()`、内存解析 `vm_stat`（App + 联动 + 压缩，与活动监视器「已使用内存」同口径）。取不到的数据静默跳过，不会报错。
 
 ## 配置
 
@@ -76,7 +76,7 @@ cd claude-code-hud && ./install.sh
 ```json
 {
   "diskPath": "/data",
-  "cols": [15, 12, 9],
+  "cols": [22, 12, 9],
   "sep": "⋮"
 }
 ```
@@ -84,7 +84,7 @@ cd claude-code-hud && ./install.sh
 | 键 | 默认值 | 作用 |
 |----|--------|------|
 | `diskPath` | `"/"` | `disk` 那格统计哪个挂载点 |
-| `cols` | `[15, 12, 9]` | 前三列的固定宽度。想显示更长的路径就调宽第一列；后两列按 `Cache 100.0%` 和 `disk 100%` 定的 |
+| `cols` | `[22, 12, 9]` | 前三列的固定宽度。目录名显示不全就调宽第一列；后两列按 `Cache 100.0%` 和 `disk 100%` 定的 |
 | `sep` | `"⋮"` | 列分隔符。`"┊"`、`"╎"`、`"¦"` 也都好看；设成 `""` 则不画分隔符、只靠列宽对齐 |
 
 ## 工作原理
@@ -93,7 +93,7 @@ cd claude-code-hud && ./install.sh
 - **按模型的周配额**是唯一一个 Claude Code 不传给 statusline 的数字。它从 CLI 自己用的那个 OAuth usage 接口读，用的是 Claude Code 已存的 token（这个 access token 过期时，会用已存的 refresh token 为这一次调用换一个新的，新 token 只在内存里用、不写回），结果缓存在 `~/.claude/hud/.usage-cache.json` 里 60 秒（出错后 30 秒），2 秒一次的刷新不会以这个频率打 API。临时失败时保留上一次的读数。设 `HUD_DEBUG=1` 可以看到请求失败的原因。
 - **Cache** 和 **tok/s** 是会话级的事实，stdin 给不了（它的 `current_usage` 只描述最近一次请求），所以从会话的 transcript JSONL 里聚合。扫描是增量的：`~/.claude/hud/.session-cache.json` 里存着字节 offset 和累计值，每次渲染只解析新追加的那部分。请求按 `requestId` 去重 —— 一次响应会写成多条 transcript 记录，而这些记录里的 usage 是重复的累计值。
 - 列对齐是量出来的，不是猜的：先剥掉 ANSI 色码，再按字素簇遍历，emoji、国旗、CJK 按两格计算。
-- CPU 占用需要两次 `/proc/stat` 采样求差值，样本缓存在 `~/.claude/hud/.sys-cache.json`，所以首次渲染显示 `cpu —`，第二次刷新起才有数字。
+- CPU 占用需要两次 `/proc/stat`（macOS 为 `os.cpus()`）采样求差值，样本缓存在 `~/.claude/hud/.sys-cache.json`，所以首次渲染显示 `cpu —`，第二次刷新起才有数字。
 - **隐私**：出站请求只发往 Anthropic —— usage 接口，以及已存 token 过期时的一次换 token 请求 —— 用的都是 Claude Code 已有的凭据。除此之外没有任何数据离开你的机器，HUD 只读本地文件和自己的 stdin。
 
 ## 卸载

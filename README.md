@@ -18,7 +18,7 @@ The divider is a dashed `⋮` rather than a solid `│` on purpose: stacked acro
 
 | Column | Row 1 | Row 2 | Row 3 |
 |--------|-------|-------|-------|
-| 1 | Model, cleaned up and color-coded by family | Reasoning effort (colored by intensity) + always-thinking on/off | Working directory (worktrees render as `repo:wt/name`) |
+| 1 | Model, cleaned up and color-coded by family | Reasoning effort (colored by intensity) + always-thinking on/off | Current folder name only, no parent path (worktrees render as `repo:wt/name`) |
 | 2 | Context window usage | **Output speed** | **Session cache-hit rate** |
 | 3 | CPU utilization | Memory usage | Disk usage |
 | 4 | 5-hour quota | 7-day quota | **Per-model weekly quota** (label = model name; bold when it is the binding limit) |
@@ -67,7 +67,7 @@ Either way, the installer copies `hud.mjs` to `~/.claude/hud/`, backs up your `s
 - A **subscription login** (Pro/Max) for the quota column. On API-key setups those cells don't render; everything else still works.
 - The per-model weekly row needs the OAuth token Claude Code already stores locally (macOS Keychain, `~/.claude/.credentials.json`, or `CLAUDE_CODE_OAUTH_TOKEN`). Without it that one row is simply absent.
 - Linux or macOS (the installer and the plugin hook are bash); Windows is untested.
-- CPU and memory read `/proc`, so they are Linux-only. Anything unavailable is silently skipped, never an error.
+- CPU and memory read `/proc` on Linux; on macOS CPU comes from `os.cpus()` and memory from `vm_stat` (App + Wired + Compressed, the same "Memory Used" figure Activity Monitor shows). Anything unavailable is silently skipped, never an error.
 
 ## Configuration
 
@@ -76,7 +76,7 @@ Optional. Create `~/.claude/hud/config.json`:
 ```json
 {
   "diskPath": "/data",
-  "cols": [15, 12, 9],
+  "cols": [22, 12, 9],
   "sep": "⋮"
 }
 ```
@@ -84,7 +84,7 @@ Optional. Create `~/.claude/hud/config.json`:
 | Key | Default | Effect |
 |-----|---------|--------|
 | `diskPath` | `"/"` | Mount point measured by the `disk` cell |
-| `cols` | `[15, 12, 9]` | Fixed widths of columns 1–3. Widen column 1 if you want longer paths; the others are sized for `Cache 100.0%` and `disk 100%` |
+| `cols` | `[22, 12, 9]` | Fixed widths of columns 1–3. Widen column 1 if you want longer folder names; the others are sized for `Cache 100.0%` and `disk 100%` |
 | `sep` | `"⋮"` | Column divider. `"┊"`, `"╎"`, `"¦"` also read well; `""` drops the dividers and aligns on padding alone |
 
 ## How it works
@@ -93,7 +93,7 @@ Optional. Create `~/.claude/hud/config.json`:
 - The **per-model weekly cap** is the one number Claude Code does not hand to the statusline. It is read from the same OAuth usage endpoint the CLI uses, with the token Claude Code already stores (if that access token has expired, it is refreshed with the stored refresh token for this call only — nothing is written back), and cached in `~/.claude/hud/.usage-cache.json` for 60s (30s after an error) so the 2s refresh never hits the API at that rate. The last good reading is kept across transient failures. Set `HUD_DEBUG=1` to log why a fetch failed.
 - **Cache** and **tok/s** are session-wide facts that stdin cannot supply — its `current_usage` describes only the latest request — so they are aggregated from the session transcript JSONL. The scan is incremental: a cache in `~/.claude/hud/.session-cache.json` holds a byte offset plus running totals, and each render parses only the bytes appended since the last one. Requests are de-duplicated by `requestId`, since one response can span several transcript records that repeat the same cumulative usage.
 - Column alignment is measured, not guessed: ANSI codes are stripped and the remainder is walked as grapheme clusters, counting emoji, flags and CJK as two cells.
-- CPU% is a delta between `/proc/stat` samples cached in `~/.claude/hud/.sys-cache.json`, so the first render shows `cpu —` and it settles from the second refresh on.
+- CPU% is a delta between `/proc/stat` (macOS: `os.cpus()`) samples cached in `~/.claude/hud/.sys-cache.json`, so the first render shows `cpu —` and it settles from the second refresh on.
 - **Privacy:** the only outbound requests go to Anthropic — the usage call and, when the stored token has expired, a token refresh — both with the credentials Claude Code already holds. Nothing else leaves your machine; the HUD reads local files and its own stdin.
 
 ## Uninstall
