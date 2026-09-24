@@ -88,6 +88,7 @@ Optional. Create `~/.claude/hud/config.json`:
 | `diskPath` | `"/"` | Mount point measured by the `disk` cell |
 | `cols` | `[22, 12, 9]` | Fixed widths of columns 1–3. Widen column 1 if you want longer folder names; the others are sized for `Cache 100.0%` and `disk 100%` |
 | `sep` | `"⋮"` | Column divider. `"┊"`, `"╎"`, `"¦"` also read well; `""` drops the dividers and aligns on padding alone |
+| `icons` | auto | `💭` / `📁` icons. Auto turns them off in JetBrains terminals (JediTerm draws emoji wider than two cells and covers the neighbouring text); `true` / `false` forces it
 
 ## How it works
 

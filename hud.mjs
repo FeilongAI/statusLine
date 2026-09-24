@@ -63,7 +63,11 @@ const DISK_PATH = typeof CFG.diskPath === 'string' ? CFG.diskPath : '/';
 const COLS = Array.isArray(CFG.cols) && CFG.cols.length === 3
   ? CFG.cols.map(Number) : [22, 12, 9];
 
-const EMO = { think: '💭', cwd: '📁' };
+// JetBrains 内置终端（JediTerm）画 emoji 时字形溢出两格、盖住相邻文字，
+// 默认在它里面改用纯文字；config.json 的 "icons": true/false 可强制开关。
+const ICONS = typeof CFG.icons === 'boolean' ? CFG.icons
+  : process.env.TERMINAL_EMULATOR !== 'JetBrains-JediTerm';
+const EMO = ICONS ? { think: '💭', cwd: '📁 ' } : { think: 'think:', cwd: '' };
 
 // ── Theme-aware palette ─────────────────────────────
 const rgb = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
@@ -474,7 +478,7 @@ async function fetchScopedLimit() {
 // ── cwd ─────────────────────────────────────────────
 // The folder cell is a fixed-width column now, so long paths elide instead of
 // stretching the grid. 3 cells go to the "📁 " prefix.
-const CWD_MAX = Math.max(8, COLS[0] - 3);
+const CWD_MAX = Math.max(8, COLS[0] - (ICONS ? 3 : 0));
 
 function fmtCwd(cwd) {
   if (!cwd) return '';
@@ -535,7 +539,7 @@ function buildGrid(stdin, scoped) {
     : thinkTag;
 
   const cwd = stdin.workspace?.current_dir ?? stdin.cwd ?? '';
-  const cwdCell = cwd ? `${EMO.cwd} ${C.white}${fmtCwd(cwd)}${C.reset}` : '';
+  const cwdCell = cwd ? `${EMO.cwd}${C.white}${fmtCwd(cwd)}${C.reset}` : '';
 
   const cw = stdin.context_window;
   const ctxPct = cw
